@@ -9,9 +9,12 @@
 #include <errno.h>
 void server(int port, int type)
 {
-	int server_sock = socket(AF_INET, SOCK_STREAM, 0);
 	char buf[500];
-	int errsv;
+	int errsv, server_sock, client_sock;
+	if (type == 0)
+		server_sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (type == 1)
+		server_sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (server_sock == -1)
 		printf("Socket initialize fail!\n");
 	struct sockaddr_in server, client;
@@ -19,47 +22,73 @@ void server(int port, int type)
 	server.sin_port = htons(port);
 	server.sin_addr.s_addr = inet_addr("192.168.0.11");
 	int len = sizeof(server);
-	if (bind(server_sock,(struct sockaddr *) &server,len) == -1)
+	if (bind(server_sock, (struct sockaddr *) &server, len) == -1)
 	{
 		errsv = errno;
 		if (errsv) printf(strerror(errsv));
 		printf(" bind\n");
 	}
-	listen(server_sock,5);
-	int client_sock = accept(server_sock, (struct sockaddr *) &client, &len);
-	if (client_sock == -1)
+	if (type == 0)
 	{
-		errsv = errno;
-		if (errsv) printf(strerror(errsv));
-		printf(" accept\n");
+		listen(server_sock,5);
+		client_sock = accept(server_sock, (struct sockaddr *) &client, &len);
+		if (client_sock == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" accept\n");
+		}
+		if (recv(client_sock, buf,500,0) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf("%d", errsv, strerror(errsv));
+			printf(" recv\n");
+		}
+		if (!strcmp(buf, "Hi"))
+		{
+			printf("%s\n", buf);
+			strcpy (buf, "Hello");
+			if (send(client_sock,(void*)buf,500,0) == -1)
+			{
+				errsv = errno;
+				if (errsv) printf(strerror(errsv));
+				printf(" send\n");
+			}	
+		}
 	}
-	strcpy (buf, "Hi");
-	printf("%s\n",buf );
-	if (send(client_sock,buf,500,0) == -1)
+	if (type == 1)
 	{
-		errsv = errno;
-		if (errsv) printf(strerror(errsv));
-		printf(" send\n");
+		if (recvfrom(server_sock, buf, 500, 0, (struct sockaddr *) &client, &len) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" recvfrom\n");
+		}
+		if (!strcmp(buf, "Hi"))
+		{
+			printf("%s\n", buf);
+			strcpy (buf, "Hello");
+			if (sendto(server_sock, buf, 500, 0, (struct sockaddr *) &client, len) == -1)
+			{
+				errsv = errno;
+				if (errsv) printf(strerror(errsv));
+				printf(" sendto\n");
+			}
+		}
 	}
-	int recv_check = recv(client_sock,buf,500,0);
-	if (recv_check == -1)
-	{
-		errsv = errno;
-		if (errsv) printf(strerror(errsv));
-		printf(" %d\n", recv_check);
-		printf("recv\n");
-	}
-	printf("%s\n", &buf);
 	close(client_sock);
 	close(server_sock);
 	exit(EXIT_SUCCESS);
 }
 
-void client(uint32_t ip, int port,int type)
+void client(uint32_t ip, int port, int type)
 {
-	int client_sock = socket(AF_INET, SOCK_STREAM, 0);
 	char buf[500];
-	int errsv, connect_status, recv_check;
+	int errsv, connect_status, recv_check, client_sock;
+	if (type == 0)
+		client_sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (type == 1)
+		client_sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (client_sock == -1)
 		printf("Socket");
 	struct sockaddr_in server;
@@ -67,29 +96,46 @@ void client(uint32_t ip, int port,int type)
 	server.sin_port = htons(port);
 	server.sin_addr.s_addr = ip;
 	int len = sizeof(server);
-	connect_status = connect(client_sock,(struct sockaddr *) &server,len);
-	if (connect_status == -1)
+	strcpy (buf, "Hi");
+	if (type == 0)
+	{
+		connect_status = connect(client_sock,(struct sockaddr *) &server,len);
+		if (connect_status == -1)
 		{
 			errsv = errno;
 			if (errsv) printf(strerror(errsv));
 			printf(" connect");
 			
 		}
-	recv_check = recv(client_sock, buf,500,0);
-	if (recv_check == -1)
-	{
-		errsv = errno;
-		if (errsv) printf("%d", errsv, strerror(errsv));
-		printf(" %d\n", recv_check);
-		printf("recv\n");
+		if (send(client_sock, buf, 500, 0) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" send\n");
+		}
+		if (recv(client_sock, buf, 500, 0) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" recv\n");
+		}
 	}
-	if (!strcmp(buf, "Hi"))
+	if (type == 1)
 	{
-		printf("%s\n", buf);
-		strcpy (buf, "Hello");
-		printf("%s\n", buf);
-		send(client_sock,(void*)buf,500,0);	
+		if (sendto(client_sock, buf, 500, 0, (struct sockaddr *) &server, len) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" sendto\n");
+		}
+		if (recvfrom(client_sock, buf, 500, 0, (struct sockaddr *) &server, &len) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" recvfrom\n");
+		}
 	}
+	printf("%s\n", &buf);	
 	close(client_sock);
 	exit(EXIT_SUCCESS);
 }
@@ -100,10 +146,21 @@ void main(int argc, char* argv[])
 	int opt;
 	int port = 0;
 	int type = 0;
-	while ((opt = getopt(argc, argv, "sc:p:")) != -1)
+	uint32_t ip = 0;
+	while ((opt = getopt(argc, argv, "sc:p:t:")) != -1)
 	{
 		switch (opt)
 		{
+			case 't':
+			{
+				if (!strcmp(optarg,"tcp"))
+					type = 0;
+				if (!strcmp(optarg,"udp"))
+					type = 1;
+				if (!strcmp(optarg,"raw"))
+					type = 2;
+				break;
+			}
 			case 'p':
 			{
 				int tmp = atoi(optarg);
@@ -130,7 +187,9 @@ void main(int argc, char* argv[])
 				{
 					port = 2222;
 				}
-				client(inet_addr("192.168.0.11"), port, type);
+				//ip = inet_addr(optarg);
+				ip = inet_addr("192.168.0.11");
+				client(ip, port, type);
 				break;
 			}
 			case ':':
