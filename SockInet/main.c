@@ -3,12 +3,37 @@
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <arpa/inet.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
+#include <net/if.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+
+uint16_t checksumm (struct iphdr ip_h)
+{
+	char buf[sizeof(ip_h)+1];
+	memcpy((void *)buf, (void *)&ip_h, sizeof(ip_h));
+	int csum = 0;
+	short * ptr;
+	ptr = (short*)buf;
+	for(int i = 0; i < 10; i++)
+	{
+		csum = csum + *ptr;
+		ptr++;
+	}
+	uint tmp = 0;
+	do
+	{
+		tmp = csum >> 16;
+		csum = (uint16_t)csum + tmp;
+	}while (tmp != 0);
+	csum = ~csum;
+	return (uint16_t)csum;
+}
 
 void server(int port, int type)
 {
@@ -90,7 +115,7 @@ void server(int port, int type)
 
 void client(uint32_t ip, int port, int type)
 {
-	char buf[1024], message[500];
+	char buf[1024], message[100];
 	int errsv, connect_status, recv_check, client_sock;
 	if (type == 0)
 		client_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -98,15 +123,31 @@ void client(uint32_t ip, int port, int type)
 		client_sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (type == 2)
 		client_sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP);
+	if (type == 3)
+		client_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (client_sock == -1)
-		printf("Socket");
+		printf("Socket\n");
 	struct sockaddr_in server;
-	struct udphdr udph;
-	struct iphdr iph;
-	server.sin_family = AF_INET;
-	server.sin_port = htons(port);
-	server.sin_addr.s_addr = ip;
+	struct sockaddr_ll server_p = {0};
+	struct udphdr udp_h;
+	struct iphdr ip_h;
+	struct ether_header eth_h;
+	if (type != 3)
+	{
+		server.sin_family = AF_INET;
+		server.sin_port = htons(port);
+		server.sin_addr.s_addr = ip;
+	}
+	else
+	{
+		server_p.sll_family = AF_PACKET;
+		server_p.sll_protocol = htons(ETH_P_ALL);
+		server_p.sll_ifindex = if_nametoindex("enp0s3");
+		server_p.sll_halen = ETHER_ADDR_LEN;
+		memset(server_p.sll_addr, 0xff, ETHER_ADDR_LEN);
+	}
 	int len = sizeof(server);
+	int len_p = sizeof(server_p);
 	int on = 1;
 	if (type == 2)
 	{
@@ -120,20 +161,36 @@ void client(uint32_t ip, int port, int type)
 		{
 			printf("Succes\n");
 		}
-		udph.source = htons(port + 1);
-		udph.dest = htons(port);
-		udph.len = htons(sizeof(udph)+sizeof(message));
-		udph.check = 0;
-		iph.version = 4;
-		iph.ihl = 5;
-		iph.tos = 0;
-		iph.id = 0;
-		iph.frag_off = 0;
-		iph.ttl = htons(64);
-		iph.protocol = IPPROTO_UDP;
-		iph.saddr = 0;
-		iph.daddr = ip;
 	}
+	if (type == 2 || type == 3)
+	{
+		udp_h.source = htons(port + 1);
+		udp_h.dest = htons(port);
+		udp_h.len = htons(sizeof(udp_h)+sizeof(message));
+		udp_h.check = 0;
+		ip_h.version = 4;
+		ip_h.ihl = 5;
+		ip_h.tot_len = htons(sizeof(ip_h)+sizeof(udp_h)+sizeof(message));
+		ip_h.tos = 0;
+		ip_h.id = 0;
+		ip_h.frag_off = 0;
+		ip_h.ttl = htons(64);
+		ip_h.protocol = IPPROTO_UDP;
+		ip_h.check = 0;
+		ip_h.saddr = 0;
+		ip_h.daddr = ip;
+		ip_h.check = checksumm(ip_h);
+		if (type == 3)
+		{
+			char dest[ETHER_ADDR_LEN] = {0xff,0xff,0xff,0xff,0xff,0xff};
+			char src[ETHER_ADDR_LEN] = {0x08,0x00,0x27,0xd0,0x1b,0x4c};
+			memcpy(eth_h.ether_dhost, dest, ETHER_ADDR_LEN);
+			memcpy(eth_h.ether_shost, src, ETHER_ADDR_LEN);
+			eth_h.ether_type = htons(ETHERTYPE_IP);
+		}
+
+	}
+
 	strcpy (message, "Hi");
 	if (type == 0)
 	{
@@ -143,7 +200,7 @@ void client(uint32_t ip, int port, int type)
 		{
 			errsv = errno;
 			if (errsv) printf(strerror(errsv));
-			printf(" connect");
+			printf(" connect\n");
 			
 		}
 		if (send(client_sock, buf, 1024, 0) == -1)
@@ -177,9 +234,9 @@ void client(uint32_t ip, int port, int type)
 	}
 	if (type == 2)
 	{
-		memcpy((void *)buf, (void *)&iph, sizeof(iph));
-		memcpy((void *)(buf + sizeof(iph)), (void *)&udph, sizeof(udph));
-    	memcpy((void *)(buf + sizeof(iph) + sizeof(udph)), (void *)message, sizeof(message));
+		memcpy((void *)buf, (void *)&ip_h, sizeof(ip_h));
+		memcpy((void *)(buf + sizeof(ip_h)), (void *)&udp_h, sizeof(udp_h));
+    	memcpy((void *)(buf + sizeof(ip_h) + sizeof(udp_h)), (void *)message, sizeof(message));
 		if (sendto(client_sock, buf, 1024, 0, (struct sockaddr *) &server, len) == -1)
 		{
 			errsv = errno;
@@ -196,6 +253,29 @@ void client(uint32_t ip, int port, int type)
 			}
 			memcpy((void*)buf, (void*)(buf+28), sizeof(message));
 		}while (strcmp(buf, "Hello"));
+	}
+	if (type == 3)
+	{
+		memcpy((void *)buf, (void *)&eth_h, sizeof(eth_h));
+		memcpy((void *)(buf + sizeof(eth_h)), (void *)&ip_h, sizeof(ip_h));
+		memcpy((void *)(buf + sizeof(eth_h) + sizeof(ip_h)), (void *)&udp_h, sizeof(udp_h));
+    	memcpy((void *)(buf + sizeof(eth_h) + sizeof(ip_h) + sizeof(udp_h)), (void *)message, sizeof(message));
+		if (sendto(client_sock, buf, sizeof(buf), 0, (struct sockaddr *) &server_p, len_p) == -1)
+		{
+			errsv = errno;
+			if (errsv) printf(strerror(errsv));
+			printf(" sendto\n");
+		}
+		do
+		{
+			if (recvfrom(client_sock, buf, 1024, 0, (struct sockaddr *) &server_p, &len_p) == -1)
+			{
+				errsv = errno;
+				if (errsv) printf(strerror(errsv));
+				printf(" recvfrom\n");
+			}
+			memcpy((void*)buf, (void*)(buf+28), sizeof(message));
+		}while (!strcmp(buf, "Hello"));
 	}
 	printf("msg %s\n", &buf);	
 	close(client_sock);
@@ -221,6 +301,8 @@ void main(int argc, char* argv[])
 					type = 1;
 				if (!strcmp(optarg,"raw"))
 					type = 2;
+				if (!strcmp(optarg,"packet"))
+					type = 3;
 				break;
 			}
 			case 'p':
