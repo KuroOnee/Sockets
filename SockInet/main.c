@@ -13,6 +13,8 @@
 #include <string.h>
 #include <errno.h>
 
+
+
 uint16_t checksumm (struct iphdr ip_h)
 {
 	char buf[sizeof(ip_h)+1];
